@@ -143,6 +143,15 @@ class Reel extends Component {
         return showing;
     }
 
+    getIcon = (row) => {
+        const pos = this.state.bottomPos;
+        const numSymbols = this.symbolList.length;
+        const topIndex = (Math.round(-pos / iconHeight) + numSymbols) % numSymbols;
+        const symbols = [...this.symbolList, ...this.symbolList];
+        const icon = symbols[topIndex + row];
+        return icon;
+    }
+
     render() {
 
         let top = this.state.topPos + 'px';
@@ -193,7 +202,7 @@ class Overlay extends Component {
     componentDidUpdate() {
         // this.updateCanvas();
     }
-    clear() {
+    clear(kill) {
         const ctx = this.canvas.current.getContext('2d');
         ctx.clearRect(0, 0, this.canvas.current.width, this.canvas.current.height);
         this.colorIndex = 0;
@@ -229,9 +238,11 @@ class Window extends Component {
 
     constructor(props) {
         super(props);
-        // this.state = {
-        //     spinning: false,
-        // }
+        this.state = {
+            bet: 100,
+            balance: 10000,
+            win: 0
+        }
         this.reels = [];
         this.reelRefs = [];
         this.spinning = false;
@@ -245,14 +256,12 @@ class Window extends Component {
 
     spin() {
         console.log('spin()');
+        // clearInterval(this.state.showWinsInterval);
         if (!this.spinning) {
-            this.overlay.current.clear();
-            // this._reel1.spin();
-            // setTimeout(this._reel1.bounce, 2000);
-            // this._reel2.spin();
-            // setTimeout(this._reel2.bounce, 2200);
-            // this._reel3.spin();
-            // setTimeout(this._reel3.bounce, 2400);
+            this.placeBet();
+            this.output.current.output('...');
+            this.overlay.current.clear(true);
+
             const spinDur = 1000;
             const addtlDurIncr = 200;
             this.reelRefs.forEach(function (reel, index) {
@@ -263,23 +272,13 @@ class Window extends Component {
 
             let that = this;
             setTimeout(function () {
-                // that.setState({
-                //     spinning: false
-                // });
                 that.spinning = false;
             }, spinDur + (this.reelRefs.length - 1) * addtlDurIncr);
-            // this.setState({
-            //     spinning: true
-            // });
+
             this.spinning = true;
         } else {
-            // this._reel1.bounce();
-            // this._reel2.bounce();
-            // this._reel3.bounce();
             this.reelRefs.map((reel) => (reel.bounce()));
-            // this.setState({
-            //     spinning: false
-            // });
+
             this.spinning = false;
         }
 
@@ -294,6 +293,28 @@ class Window extends Component {
         }
     }
     spinComplete = () => {
+        const matches = this.getWinningCombinations();
+        // console.log('matches: ', matches);
+        const s = matches.length != 1 ? 's' : '';
+        const won = matches.length > 0 ? 'won!' : '';
+        this.output.current.output(`${matches.length} line${s} ${won}`);
+        // 
+        this.overlay.current.clear();
+        if (matches.length > 0) {
+            this.stepThroughWins(matches);
+            let payout = 0;
+            matches.forEach(path => {
+                let icon = this.reelRefs[0].getIcon(path[0]);
+                payout += this.getCombinationValue(icon, path.length);
+            });
+            this.setState({
+                win: payout
+            });
+            this.addBalance(payout);
+        }
+
+    }
+    getWinningCombinations = () => {
         // Check for matching icons, at least 3 reels long, no more than 1 row apart
         let results = [];
         this.reelRefs.forEach(reel => {
@@ -302,6 +323,9 @@ class Window extends Component {
         // results is reels-by-rows array
         function checkNextReel(path) {
             // This returns an array of arrays, each representing a path of matching symbols across reels
+            // path is a list of reels/rows, where the index of each item is the reel and the value of the item is the row
+            // This function then checks the next reel to see if any *connected* rows contain a matching icon.
+            // All new paths, branching from arg path, are returned
             console.log(`checkNextReel(${path})`);
             // match is an array of rows, left to right, that all have same value
             // [0,1,0] means same value on reel0-row0, reel1-row1, reel2-row0
@@ -341,52 +365,131 @@ class Window extends Component {
         // Check results for winning combinations
         let newMatches = [];
         for (let reel = 1; reel < results.length; reel++) {
-            console.log(`_____reel ${reel}`);
+            // console.log(`_____reel ${reel}`);
             newMatches.length = 0;
-            console.log('matches.length: ', matches.length);
+            // console.log('matches.length: ', matches.length);
             // matches.forEach(path => {
             for (let m = 0; m < matches.length; m++) {
-                console.log('m: ', m);
+                // console.log('m: ', m);
                 let path = matches[m];
-                console.log('path.length: ', path.length);
+                // console.log('path.length: ', path.length);
                 if (path.length === reel) {
                     // path is not deadended yet
                     let newPaths = checkNextReel(path);
                     newMatches = [...newMatches, ...newPaths];
-                    console.log('newMatches: ', newMatches);
+                    // console.log('newMatches: ', newMatches);
                 } else {
                     newMatches = [...newMatches, path];
                 }
             }
             // });
             matches = newMatches.slice();
-            console.log('matches: ', matches);
+            // console.log('matches: ', matches);
         }
 
         matches = matches.filter(path => path.length > 2);
-        console.log('matches: ', matches);
-        const s = matches.length != 1 ? 's' : '';
-        const won = matches.length > 0 ? 'won!' : '';
-        this.output.current.output(`${matches.length} line${s} ${won}`);
-        // 
-        this.overlay.current.clear();
-        matches.forEach(path => {
+        return matches;
+
+    }
+
+    stepThroughWins(paths) {
+        this.overlay.current.clear(true);
+        paths.forEach(path => {
             this.overlay.current.drawPath(path);
         });
+        let dur = 2000;
+        let index = 0;
+        let path = paths[index];
+        const s = paths.length != 1 ? 's' : '';
+        const won = paths.length > 0 ? 'won!' : '';
+        const linesWon = `${paths.length} line${s} ${won}`;
+        let loop = 0;
+        let message = '';
+        let displayLoop = () => {
+            if (this.spinning) { return };
+            if (loop % 2 === 0) {
+                message = linesWon + '\n ';
+                this.overlay.current.clear();
+                dur = 200;
+            } else {
+                // Draw Path
+                path = paths[index];
+                this.overlay.current.clear();
+                this.overlay.current.drawPath(path);
+                // Display win in Output
+                message = `${linesWon}\n${this.announceWin(path)}`;
+                index++;
+                index = index % paths.length;
+                dur = 2000;
+            }
+            message = message.split('\n').map((item, i) => <span key={i}>{item}<br /></span>);
+            this.output.current.output(message);
+            loop++;
+            if (!this.spinning) { setTimeout(displayLoop, dur) };
+        }
+        setTimeout(displayLoop, dur);
+        // this.setState({
+        //     showWinsInterval: setTimeout(() => {
+        //         if (loop % 2 === 0) {
+        //             message = linesWon + '\n ';
+        //             this.overlay.current.clear();
+        //             dur = 2000;
+        //         } else {
+        //             // Draw Path
+        //             path = paths[index];
+        //             this.overlay.current.clear();
+        //             this.overlay.current.drawPath(path);
+        //             // Display win in Output
+        //             message = `${linesWon}\n${this.announceWin(path)}`;
+        //             index++;
+        //             index = index % paths.length;
+        //             dur = 200;
+        //         }
+        //         message = message.split('\n').map((item, i) => <span key={i}>{item}<br /></span>);
+        //         this.output.current.output(message);
+        //         loop++;
+        //     }, dur)
+        // });
+    }
+
+    announceWin(path) {
+        const row = path[0];
+        const icon = this.reelRefs[0].getIcon(row);
+        const value = this.getCombinationValue(icon, path.length);
+        let message = `${path.length} ${icon}s = ${value} coins`;
+        return message;
+        // this.output.current.output(message);
+    }
+
+    getCombinationValue(icon, pathLength) {
+        const values = {
+            '9': 0.10,
+            '10': 0.15,
+            'J': 0.20,
+            'Q': 0.25,
+            'K': 0.30,
+            'A': 0.35,
+            '\u2605': 0.50
+        }
+        const multiplier = Math.pow(3, pathLength - 3);
+        const value = (values[icon] + values[icon] * multiplier) * this.state.bet;
+        return Math.round(value);
+    }
+    placeBet() {
+        this.addBalance(-1 * this.state.bet);
+    }
+    addBalance(amount) {
+        this.setState({
+            balance: this.state.balance + amount
+        })
     }
 
     // Add to our spans refs array
     addReelRef = (node) => {
         console.log(`addReelRef(${node})`);
         this.reelRefs = [...this.reelRefs, node];
-        // console.log('addReelRef: ', this.reelRefs.length);
-        console.log('reelRefs: ', this.reelRefs.length);
     }
-    // assignRef() {
-    //     let myRef = createRef();
-    //     this.reelRefs.push(myRef);
-    //     return myRef;
-    // }
+
     makeReels(numReels) {
         console.log(`makeReels(${numReels})`);
         this.reelRefs.length = this.reels.length = 0;
@@ -398,8 +501,6 @@ class Window extends Component {
                 reelStopped={this.reelStopped}
             />;
             this.reels.push(reel);
-
-            // console.log('reel: ', reel);
         }
     }
     renderReels() {
@@ -407,52 +508,22 @@ class Window extends Component {
             this.reels.map((reel) => (reel))
         )
     }
-    // addChild() {
-    //     console.log('addChild()');
-    //     let myRef;
-    //     let C = <Child ref={(child) => { myRef = child; }} />
-    //     console.log(myRef);
-    //     let childrens = this.state.children.slice();
-    //     childrens.push(myRef);
-    //     this.setState({
-    //         children: childrens
-    //     })
-    //     console.log('childrens: ', this.state.children);
-    //     return (
-    //         C
-    //     )
-    // }
-    // renderChildren() {
-    //     console.log('renderChildren()');
-    //     let childrens = this.state.children.slice();
-    //     return childrens.map((child, index) => (child.myRef));
-    // }
+
     render() {
         console.log('Window.render()');
         return (
             <React.Fragment>
+                <div style={outputStyle}>Balance: {this.state.balance} coins</div>
                 <button onClick={() => { this.spin() }}>SPIN</button>
                 <div style={windowStyle}>
-                    {/* {this.showReels()} */}
-                    {/* <Reel ref={(child) => { this._reel1 = child; }} />
-                        <Reel ref={(child) => { this._reel2 = child; }} />
-                        <Reel ref={(child) => { this._reel3 = child; }} /> */}
-                    {/* {for(let i = 0; i < 3; i++){
-                            <Reel ref={(child) => { this[`reel${i}`] = child; }} />
-                        }} */}
-                    {/* {this.makeReels(3)}; */}
                     {this.renderReels()}
-                    {/* {this.state.tasks.map((task, i) => (
-                            <button
-                                key={i}
-                                onClick={() => { this.refsArray[i].scrollIntoView(); }}>
-                                Go to {task.name}
-                            </button>
-                        ))} */}
                     <Overlay ref={this.overlay} />
                 </div>
-                {/* {this.renderChildren()} */}
-                <Output ref={this.output} />
+                <div>
+                    <div style={outputStyle}>Last Win: {this.state.win} coins</div>
+                    <Output ref={this.output} />
+                    <div style={outputStyle}>Bet: {this.state.bet} coins</div>
+                </div>
 
             </React.Fragment>
         );
@@ -501,11 +572,14 @@ const windowStyle = {
 }
 
 const outputStyle = {
+    display: 'inline-block',
+    verticalAlign: 'top',
     border: '1px solid black',
     padding: '1rem',
     fontSize: '1rem',
     borderRadius: '1rem'
 }
+
 const overlayStyle = {
     // border: '1px dashed blue',
     // boxSizing: 'border-box',
